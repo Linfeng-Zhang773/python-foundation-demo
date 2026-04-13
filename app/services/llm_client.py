@@ -3,9 +3,10 @@ Async LLM client for DeepSeek (OpenAI-compatible API)
 """
 
 import httpx
-
+import asyncio
 from app.config import settings
 from app.logger import setup_logger
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 logger = setup_logger(__name__, settings.log_level)
 
@@ -57,3 +58,30 @@ async def chat_once(messages: list[dict]) -> str:
     reply = data["choices"][0]["message"]["content"]
     logger.info("LLM 返回 %d 字符", len(reply))
     return reply
+
+
+async def chat_once_with_retry(messages: list[dict]) -> str:
+    """
+    Same as chat once, but retries on transient failures with exponentail backoff
+    """
+    last_error: Exception | None = None
+
+    for attempt in range(1, settings.max_retries + 1):
+        try:
+            return await chat_once(messages)
+        except LLMError as e:
+            last_error = e
+            if attempt == settings.max_retries:
+                logger.error("重试 %d 次后仍失败", settings.max_retries)
+                break
+            # exp backoff: 1s,2s, 4s
+            wait = 2 ** (attempt - 1)
+            logger.warning("第 %d 次失败, %d 秒后重试: %s", attempt, wait, e)
+            await asyncio.sleep(wait)
+
+    raise LLMError(f"All {settings.max_retries} retries failed") from last_error
+
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
+async def chat_once_with_retry_v2(messages: list[dict]) -> str:
+    return await chat_once(messages)

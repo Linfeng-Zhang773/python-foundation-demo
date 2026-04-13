@@ -2,6 +2,8 @@
 Async LLM client for DeepSeek (OpenAI-compatible API)
 """
 
+import json
+from typing import AsyncIterator
 import httpx
 import asyncio
 from app.config import settings
@@ -85,3 +87,49 @@ async def chat_once_with_retry(messages: list[dict]) -> str:
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
 async def chat_once_with_retry_v2(messages: list[dict]) -> str:
     return await chat_once(messages)
+
+
+async def chat_stream(messages: list[dict]) -> AsyncIterator[str]:
+    """
+    Stream a chat response, yielding text chunks as they arrive
+
+    Usage:
+        async for chunk in chat_stream(messages):
+            print(chunk, end="", flush=True)
+    """
+    url = f"{settings.deepseek_base_url}/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {settings.deepseek_api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": settings.llm_model,
+        "messages": messages,
+        "stream": True,  # Set stream to True
+    }
+
+    logger.info("流式调用 LLM: %d 条消息", len(messages))
+
+    async with httpx.AsyncClient(timeout=settings.request_timeout) as client:
+        try:
+            async with client.stream(
+                "POST", url, headers=headers, json=payload
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line or not line.startswith("data: "):
+                        continue
+                    data_str = line[len("data: ") :]
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        data = json.loads(data_str)
+                        delta = data["choices"][0]["delta"]
+                        content = delta.get("content")
+                        if content:
+                            yield content
+                    except (json.JSONDecodeError, KeyError, IndexError) as e:
+                        logger.warning("解析流式数据失败: %s", e)
+                        continue
+        except httpx.HTTPError as e:
+            logger.exception("流式请求失败")

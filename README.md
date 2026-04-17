@@ -6,11 +6,14 @@ Set up a standard project skeleton covering type hints, Pydantic validation, con
 
 - `app/config.py` — Configuration management based on pydantic-settings
 - `app/logger.py` — Unified logger factory
-- `app/models.py` — dataclass and Pydantic models
+- `app/models.py` — Internal domain models (dataclass + Pydantic)
 - `app/services/user_service.py` — Example business logic
 - `app/services/llm_client.py` — Async LLM client (DeepSeek, with retry & streaming)
-- `main.py` — Entry point for Day 1 demo
-- `chat_cli.py` — Interactive CLI chat with streaming output
+- `app/api/schemas.py` — API request/response schemas
+- `app/api/routes.py` — HTTP route handlers
+- `main.py` — Day 1 demo entry
+- `chat_cli.py` — Day 2 interactive CLI chat
+- `server.py` — Day 3 FastAPI entry (run with `uvicorn server:app --reload`)
 
 ## Run
 ```bash
@@ -25,6 +28,19 @@ Inside the chat:
 - Type your message and press Enter
 - `/reset` clears conversation history
 - `/exit` or Ctrl+C quits
+
+### Run the HTTP API (Day 3)
+
+```bash
+uvicorn server:app --reload
+```
+
+Then open http://127.0.0.1:8000/docs for interactive API docs.
+
+Endpoints:
+- `GET /health` — liveness probe
+- `POST /chat` — full reply, non-streaming
+- `POST /chat/stream` — Server-Sent Events streaming
 
 ## What I Learned
 
@@ -42,3 +58,13 @@ Inside the chat:
 - Streaming with Server-Sent Events: parsing `data: ...` lines, handling `[DONE]`, skipping malformed chunks without killing the stream
 - Async generators (`async def` + `yield`) consumed by `async for`
 - Multi-turn chat state: appending user/assistant messages to history, rolling back on failure to keep state consistent
+
+### Day 3 — FastAPI fundamentals
+- Routing with `APIRouter`, keeping route files independent of the app entry
+- Pydantic models at the API boundary give free validation + auto-generated `/docs`
+- Separation between domain models (`app/models.py`) and API schemas (`app/api/schemas.py`)
+- Translating business exceptions (`LLMError`) into HTTP exceptions (`HTTPException(502)`)
+- Streaming responses via `StreamingResponse` + async generator + SSE format (`data: ...\n\n`)
+- Why error handling in a streaming endpoint must `yield` the error, not `raise` it
+- CORS middleware basics and the `allow_origins=["*"]` + credentials constraint
+- Global exception handler for defense-in-depth: opaque message to clients, full traceback in logs
